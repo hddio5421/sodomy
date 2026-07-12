@@ -1,0 +1,20 @@
+# 機密設定（絕對不能上傳）
+.env
+
+# 本地資料快取（由 pipeline 自動生成，不納入版控）
+data/raw/prices/
+data/raw/capital/
+data/processed/weekly.csv
+data/processed/signals.csv
+data/processed/chart_data.json
+data/processed/imputed_price_rows.csv
+data/processed/invalid_price_rows.csv
+
+# logs
+logs/
+
+# Python 快取
+src/__pycache__/
+__pycache__/
+*.pyc
+*.pyo

@@ -1,0 +1,86 @@
+﻿<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>台股 20 週 MA 選股</title>
+  <link rel="stylesheet" href="styles.css?v=20260711-4" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>台股 20 週 MA 選股</h1>
+      <p id="generatedAt">讀取資料中</p>
+    </div>
+    <div class="controls">
+      <label>
+        選股日期
+        <select id="dateSelect"></select>
+      </label>
+      <label>
+        股票
+        <select id="stockSelect"></select>
+      </label>
+      <label>
+        個股查詢
+        <span class="stock-query">
+          <input id="stockQuery" type="text" inputmode="text" autocomplete="off" placeholder="例如 2330" aria-label="輸入股票代號" />
+          <button id="stockQueryButton" type="button">查詢</button>
+        </span>
+      </label>
+      <label class="toggle-control">
+        <input id="trendFilter" type="checkbox" checked />
+        <span>MA20 趨勢向上</span>
+      </label>
+      <label>
+        資本額範圍（億）
+        <span class="capital-range">
+          <input id="capitalMin" class="number-filter" type="number" min="0" step="1" placeholder="最低" aria-label="最低資本額（億）" />
+          <span>–</span>
+          <input id="capitalMax" class="number-filter" type="number" min="0" step="1" placeholder="最高" aria-label="最高資本額（億）" />
+        </span>
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary" aria-label="選股摘要">
+      <div>
+        <span class="label">當日選出</span>
+        <strong id="signalCount">0</strong>
+      </div>
+      <div>
+        <span class="label">目前股票</span>
+        <strong id="currentStock">-</strong>
+      </div>
+      <div>
+        <span class="label">MA20 距離</span>
+        <strong id="distance">-</strong>
+      </div>
+      <div>
+        <span class="label">歷史資本額</span>
+        <strong id="currentCapital">-</strong>
+      </div>
+    </section>
+
+    <section class="layout">
+      <aside>
+        <h2>選股清單</h2>
+        <div id="signalList" class="signal-list"></div>
+      </aside>
+      <section class="chart-area" aria-label="週 K 線圖">
+        <div class="chart-toolbar" role="toolbar" aria-label="K 線瀏覽工具">
+          <button id="chartPrevious" type="button" aria-label="顯示較早資料" title="顯示較早資料">&#9664;</button>
+          <button id="chartNext" type="button" aria-label="顯示較新資料" title="顯示較新資料">&#9654;</button>
+          <button id="chartZoomOut" type="button" aria-label="縮小 K 線" title="縮小 K 線">&minus;</button>
+          <button id="chartZoomIn" type="button" aria-label="放大 K 線" title="放大 K 線">+</button>
+          <button id="chartLatest" class="chart-latest" type="button" title="跳到最新資料">最新</button>
+        </div>
+        <svg id="chart" role="img" aria-label="週 K 線、20 週均線與成交量"></svg>
+      </section>
+    </section>
+  </main>
+
+  <script src="app.js?v=20260711-12"></script>
+</body>
+</html>
