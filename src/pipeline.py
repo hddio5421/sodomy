@@ -42,9 +42,9 @@ class RunConfig:
 
 def load_token() -> str:
     load_dotenv(PROJECT_ROOT / ".env")
-    token = os.getenv("FINMIND_API_KEY")
+    token = os.getenv("FINMIND_API_KEY") or os.getenv("FINMIND_TOKEN")
     if not token:
-        raise RuntimeError("Missing FINMIND_API_KEY in .env")
+        raise RuntimeError("Missing FINMIND_API_KEY or FINMIND_TOKEN")
     return token
 
 
@@ -57,8 +57,10 @@ def load_manifest() -> dict:
 
 def save_manifest(manifest: dict) -> None:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
-    with MANIFEST_PATH.open("w", encoding="utf-8") as fh:
+    temp_path = MANIFEST_PATH.with_suffix(".json.tmp")
+    with temp_path.open("w", encoding="utf-8") as fh:
         json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    temp_path.replace(MANIFEST_PATH)
 
 
 def load_capital_manifest() -> dict:
@@ -77,7 +79,8 @@ def save_capital_manifest(manifest: dict) -> None:
 def manifest_covers(entry: dict | None, start: str, end: str) -> bool:
     if not entry:
         return False
-    return entry.get("start", "9999-99-99") <= start and entry.get("end", "0000-00-00") >= end
+    covered_through = entry.get("covered_through", entry.get("end", "0000-00-00"))
+    return entry.get("start", "9999-99-99") <= start and covered_through >= end
 
 
 def finmind_get(dataset: str, token: str, **params: str) -> list[dict]:
@@ -144,6 +147,8 @@ def fetch_price_one(
     refresh: bool,
     cached_only: bool,
     manifest: dict,
+    replace_from: str | None = None,
+    cycle_id: str | None = None,
 ) -> pd.DataFrame:
     PRICE_DIR.mkdir(parents=True, exist_ok=True)
     cache = PRICE_DIR / f"{stock_id}.csv"
@@ -156,9 +161,9 @@ def fetch_price_one(
     if cache.exists() and not refresh and manifest_covers(manifest_entry, start, end):
         return cached_df
 
-    fetch_start = start
+    fetch_start = max(start, replace_from) if replace_from else start
     existing_start = start
-    if not cached_df.empty and manifest_entry:
+    if not replace_from and not cached_df.empty and manifest_entry:
         existing_start = min(str(manifest_entry.get("start", start)), start)
         existing_end = str(manifest_entry.get("end", "0000-00-00"))
         if existing_end >= start and existing_end < end:
@@ -176,14 +181,23 @@ def fetch_price_one(
         df = pd.DataFrame(columns=["date", "stock_id", "Trading_Volume", "Trading_money", "open", "max", "min", "close", "spread", "Trading_turnover"])
     if "stock_id" in df.columns:
         df["stock_id"] = df["stock_id"].astype(str)
+    if not cached_df.empty and replace_from and "date" in cached_df.columns:
+        cached_df = cached_df[cached_df["date"].astype(str) < fetch_start]
     if not cached_df.empty:
         df = pd.concat([cached_df, df], ignore_index=True)
         if "date" in df.columns:
             df = df.drop_duplicates(["date", "stock_id"], keep="last").sort_values(["stock_id", "date"])
     df.to_csv(cache, index=False, encoding="utf-8-sig")
+    last_trade_date = None
+    if not df.empty and "date" in df.columns:
+        valid_dates = df["date"].dropna().astype(str)
+        last_trade_date = valid_dates.max() if not valid_dates.empty else None
     manifest[stock_id] = {
         "start": existing_start,
         "end": end,
+        "covered_through": end,
+        "last_trade_date": last_trade_date,
+        "cycle_id": cycle_id,
         "rows": int(len(df)),
         "updated_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -486,7 +500,14 @@ def dataframe_records(df: pd.DataFrame) -> list[dict]:
     return json.loads(df.to_json(orient="records", force_ascii=False))
 
 
-def build_chart_payloads(weekly: pd.DataFrame, signals: pd.DataFrame, stock_info: pd.DataFrame) -> tuple[dict, dict[str, list[dict]], dict[str, list[dict]]]:
+def build_chart_payloads(
+    weekly: pd.DataFrame,
+    signals: pd.DataFrame,
+    stock_info: pd.DataFrame,
+    start: str = DEFAULT_START,
+    end: str = DEFAULT_END,
+    finalized_week_through: str | None = None,
+) -> tuple[dict, dict[str, list[dict]], dict[str, list[dict]]]:
     weekly = weekly.copy()
     signals = signals.copy()
     stock_info = stock_info.copy()
@@ -513,8 +534,10 @@ def build_chart_payloads(weekly: pd.DataFrame, signals: pd.DataFrame, stock_info
     signal_dates = sorted(signals["date"].dropna().astype(str).unique())
     index = {
         "generated_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "start": DEFAULT_START,
-        "end": DEFAULT_END,
+        "start": start,
+        "end": end,
+        "data_through": end,
+        "finalized_week_through": finalized_week_through or end,
         "dates": signal_dates,
         "meta": meta,
         "series_files": {stock_id: f"series/{stock_id}.json" for stock_id in series},
@@ -527,13 +550,31 @@ def build_chart_payloads(weekly: pd.DataFrame, signals: pd.DataFrame, stock_info
     return index, series, signal_groups
 
 
-def build_outputs(prices: pd.DataFrame, stock_info: pd.DataFrame, balance_sheet: pd.DataFrame | None = None) -> None:
+def build_outputs(
+    prices: pd.DataFrame,
+    stock_info: pd.DataFrame,
+    balance_sheet: pd.DataFrame | None = None,
+    start: str = DEFAULT_START,
+    end: str = DEFAULT_END,
+    finalized_week_through: str | None = None,
+) -> None:
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     weekly = add_indicators(daily_to_weekly(prices))
     capital_history = normalize_capital_history(balance_sheet if balance_sheet is not None else pd.DataFrame())
+    capital_cache = PROCESSED_DIR / "capital_history.csv"
+    if capital_history.empty and capital_cache.exists():
+        capital_history = pd.read_csv(capital_cache, dtype={"stock_id": str})
+        print(f"using normalized capital cache: {capital_cache}", flush=True)
     weekly = attach_capital_history(weekly, capital_history)
     signals = build_signals(weekly, stock_info)
-    chart_index, series, signal_groups = build_chart_payloads(weekly, signals, stock_info)
+    chart_index, series, signal_groups = build_chart_payloads(
+        weekly,
+        signals,
+        stock_info,
+        start=start,
+        end=end,
+        finalized_week_through=finalized_week_through,
+    )
 
     weekly.to_csv(PROCESSED_DIR / "weekly.csv", index=False, encoding="utf-8-sig")
     signals.to_csv(PROCESSED_DIR / "signals.csv", index=False, encoding="utf-8-sig")
@@ -571,7 +612,7 @@ def run(config: RunConfig) -> None:
     print(f"selected symbols: {len(selected)}", flush=True)
     prices = fetch_prices(selected["stock_id"].tolist(), token, config)
     balance_sheet = fetch_capital_history(selected["stock_id"].tolist(), token, config)
-    build_outputs(prices, stock_info, balance_sheet)
+    build_outputs(prices, stock_info, balance_sheet, start=config.start, end=config.end)
 
 
 def parse_args() -> RunConfig:

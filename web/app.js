@@ -488,7 +488,12 @@ async function boot() {
     const response = await fetch("../data/processed/chart_index.json");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.data = await response.json();
-    els.generatedAt.textContent = `資料產生時間：${state.data.generated_at}`;
+    const dataThrough = state.data.data_through || state.data.end || "-";
+    const finalizedThrough = state.data.finalized_week_through || dataThrough;
+    const completeness = dataThrough > finalizedThrough
+      ? `資料截至：${dataThrough}（當週未完成；完整週截至 ${finalizedThrough}）`
+      : `資料截至：${dataThrough}（完整週）`;
+    els.generatedAt.textContent = `${completeness}｜產生時間：${state.data.generated_at || "-"}`;
     setupControls();
     render();
     window.addEventListener("resize", () => {

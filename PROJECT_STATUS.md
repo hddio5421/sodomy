@@ -1,168 +1,130 @@
-# 台股 20 週 MA 選股專案續作說明
+# 台股 20 週 MA 專案狀態與維護說明
 
-更新日期：2026-07-11
+最後更新：2026-07-13
 
-## 專案位置與用途
+## 目前狀態
 
-- 專案根目錄：`C:\Users\Ernesto\Documents\工作區\林恩如`
-- 互動網頁：`http://127.0.0.1:8358/web/`
-- 目標資料區間：`2000-01-01` 至 `2026-07-10`
-- 策略：周收盤價由下往上突破 20 週移動平均線（MA20）時產生進場訊號。
-- `.env` 內含 FinMind 連線資料。不得把 token 寫入文件、程式輸出或對話內容。
+- 實際專案位置：`C:\Users\Ernesto\Documents\工作區\林恩如`
+- 歷史資料起點：`2000-01-01`
+- 已完成的基礎資料：2,530 檔股價與歷史股本，既有完整資料截至 `2026-07-10`
+- 後續更新已改為自動日期、單一程式、每次最多 550 檔、可跨排程接續
+- 固定結束日 `2026-07-10` 與程式內等待 65 分鐘的舊流程，已從排程入口移除
 
-## 目前下載進度
+## 後續增量更新設計
 
-完成快照（`2026-07-11 22:09:43`）：
-
-- 股票總數：2,530 檔
-- 股價已下載到 `2026-07-10`：2,530 檔（100%）
-- 歷史股本已下載到 `2026-07-10`：2,530 檔（100%）
-- 股價與股本下載程序均已正常結束。
-- 進度檔：`data/raw/price_manifest.json`
-- 個股日資料快取：`data/raw/prices/{stock_id}.csv`
-
-背景下載狀態：
-
-- 本輪股價與股本下載均已完成，下載器已正常退出。
-- 本輪曾多次碰到 FinMind API 上限，已由 65 分鐘限流重試機制自動完成。
-- 目前只保留網頁伺服器 PID `27116`。
-- 尚未建立季度自動更新排程；必須先由使用者指定執行月份／日期與時間。
-
-查詢目前 Python 程序：
+排程入口只有一個：
 
 ```powershell
-Get-CimInstance Win32_Process -Filter "name = 'python.exe' or name = 'pythonw.exe'" | Select-Object ProcessId, ParentProcessId, CommandLine
+.\start_downloader.ps1
 ```
 
-啟動或恢復下載器：
+實際執行：
 
 ```powershell
-C:\Users\Ernesto\miniconda3\python.exe src\run_downloader.py --start 2000-01-01 --end 2026-07-10 --retry-minutes 65 --sleep 0.15
+C:\Users\Ernesto\miniconda3\python.exe src\run_downloader.py --end auto --batch-size 550 --sleep 0.15
 ```
 
-## 最新資料輸出
+流程：
 
-最近一次完整快取重建完成：`2026-07-11 22:09:43`（資料產生時間 `22:08:17`）
+1. 第一次執行建立本輪狀態，鎖定截止日與股票清單。
+2. 從上一個完整週後的星期一開始請求，以便覆蓋所有尚未定稿的本週日線。
+3. 按股票清單順序選取尚未到達截止日的股票，每次最多 550 檔。
+4. 每成功一檔就以原子方式更新 `price_manifest.json`；排程中斷或達 API 上限後，下次會跳過已完成股票並接續。
+5. 只有全部股票完成後才讀取所有股價快取，重建週 K、MA20、選股與網頁 JSON。
+6. 完成後清除本輪狀態，下一次執行才會建立新的截止日。
 
-- 周資料：2,056,720 筆
-- 策略訊號：111,024 筆
-- 歷史股本：73,857 筆，涵蓋 2,420 檔股票
-- 個股圖表 JSON：2,529 檔
-- 選股週日期：1,342 個
-- 2,530 檔中有 1 檔沒有可用周資料，因此沒有圖表 JSON。
-- 68 檔股票從未觸發策略，但現在仍可用個股查詢功能顯示 K 線。
+狀態檔與互斥鎖：
 
-主要輸出：
+- `data/raw/incremental_update_state.json`
+- `data/raw/incremental_update.lock`
 
-- `data/processed/weekly.csv`
-- `data/processed/signals.csv`
-- `data/processed/chart_index.json`
-- `data/processed/series/{stock_id}.json`
-- `data/processed/signals/{date}.json`
-- `data/processed/imputed_price_rows.csv`
-- `data/processed/invalid_price_rows.csv`
-- `data/processed/capital_history.csv`
-- `data/raw/capital/{stock_id}.csv`（股本下載後建立）
-- `data/raw/capital_manifest.json`（股本下載後建立）
+互斥鎖可避免工作排程器在上一輪尚未結束時重複啟動相同下載。超過 4 小時的殘留鎖會自動清除。
 
-只用本機快取重建網頁資料：
+## 550 檔與 API 限制
+
+- FinMind 註冊帳號目前文件列出的限制為每小時 600 次 API 請求。
+- 每批最多 550 檔，預留約 50 次給股票清單或重試等額外請求。
+- 約 2,530 檔需 5 次排程才完成一輪。
+- 碰到上限時不在程式內睡 65 分鐘；程式保存進度後結束，交由下一次排程接續。
+- 歷史股本不納入每週 API 下載批次，以免多用 2,530 次請求；重建時使用既有股本快取。
+
+## 週中與週末更新
+
+- 平日執行：自動截止到當天，可產生部分週資料。
+- 週末執行：自動截止到剛結束的週五。
+- 星期五當天不立即宣告完整週；從星期六開始才將該週五標記為 `finalized_week_through`。
+- 週中下載過並不會妨礙週末更新。週末仍從該週星期一重抓所有實際交易日，覆蓋同週舊資料，再重新合併週 K。
+- 若更新起點是星期二，請求仍由星期一開始。星期一若休市，只會沒有星期一資料；當週第一個實際交易日自然成為週 K 開盤日。
+- 若週末忘記執行，下次排程會繼續補抓；在完成前，網頁仍保留上一個「全市場一致完成」的輸出。
+
+## MA20 正確性
+
+日線快取會合併去重，當週範圍採覆蓋方式；所有股票到齊後，程式從完整歷史日線重新建立全部週 K，再計算 rolling 20 週 MA。因此：
+
+- 週中看到的 MA20 或突破訊號屬於暫時結果。
+- 週末完整資料會取代部分週並重新計算。
+- 不會只拿新增一週單獨計算 MA20，也不會失去前 19 週資料。
+
+網頁 `chart_index.json` 新增：
+
+- `data_through`：資料實際抓取截止日
+- `finalized_week_through`：最後一個確認完整的週五
+
+網頁頁首會依這兩個欄位顯示完整週或部分週提示。
+
+## GitHub 與排程
+
+- 拆成 550 檔主要解決 FinMind 每小時限制與中斷續傳，不會減少整體運算時間。
+- 公開儲存庫使用標準 GitHub-hosted runner 不計 Actions 分鐘；私人 GitHub Free 帳號有每月 Actions 分鐘額度。
+- 已新增 `.github/workflows/finmind-weekly-update.yml`，使用 Repository Secret `FINMIND_TOKEN`，不需要也不會上傳 `.env`。
+- GitHub-hosted runner 是臨時環境，因此工作流程使用 `actions/cache` 保存與還原 `data/raw`、manifest 和輪次狀態。
+- Cache key 每次執行都不同，下一次透過共同 prefix 還原最近一份快取，避免不可變 cache key 無法覆寫。
+- 第一次沒有 cache 時會從 `2000-01-01` 分五批建立完整股價基礎；之後才使用當週覆蓋更新。
+- 歷史股本使用已追蹤的 `data/processed/capital_history.csv`，GitHub 排程不會每週呼叫股本 API。
+- 台灣時間每週六 10:00 至 14:00 每小時執行一次。全部完成後，Actions bot 才 commit、push `chart_index.json`、`series/`、`signals/` 與股本快取。
+- `.gitignore` 已忽略 `data/raw/`、大份 CSV、log 與 `.env`，避免把 token、本機狀態或大量原始資料提交到 GitHub。
+
+GitHub 儲存庫必須先設定：
+
+1. `Settings` → `Secrets and variables` → `Actions` → 新增 `FINMIND_TOKEN`。
+2. `Settings` → `Actions` → `General` → 確認 workflow 允許讀寫 repository contents。
+3. 首次可到 `Actions` → `FinMind weekly update` 手動執行；後續由週六排程接續。
+
+## 操作指令
+
+查看接續狀態：
 
 ```powershell
-C:\Users\Ernesto\miniconda3\python.exe src\pipeline.py --start 2000-01-01 --end 2026-07-10 --cached-only --sleep 0
+C:\Users\Ernesto\miniconda3\python.exe src\run_downloader.py --status
 ```
 
-## 周 K 與資料清理規則
-
-- 周期使用週一至週六（`W-SAT`）分組，避免歷史週六交易被切到下一周。
-- K 棒顯示日期 `date` 統一標為該周開始日（週一）。
-- `week_end_date` 保留該周週五或歷史週六的結束日期。
-- `last_trade_date` 保留個股該周最後一筆實際資料日期。
-- OHLC 只要出現 0，就用該股票前一個有效收盤價補成平盤 K 棒。
-- 成交量保留原始資料，不因價格補值而修改。
-- 找不到前一個有效收盤價的早期異常資料會記錄到 `invalid_price_rows.csv` 並略過。
-- MA20 與突破訊號以清理後周資料計算。
-- `ma20_rising` 定義為本周 MA20 大於前一周 MA20。
-- 歷史股本來源為 `TaiwanStockBalanceSheet`，資料起點為 2011-12-01。
-- 股本科目會排除資本公積、股本溢價、預收股本等非實收股本項目。
-- Q1、Q2、Q3 股本分別從 5/16、8/15、11/15 起生效；年報股本從次年 4/1 起生效，以避免前視偏誤。
-- 2011 年以前不使用目前股本倒填，維持無資料。
-
-## 最新網頁功能
-
-上方控制區：
-
-- 選股日期下拉選單，日期均為周 K 開始日（週一）。
-- 當周入選股票下拉選單。
-- 個股查詢輸入框：輸入股票代號後按 Enter 或「查詢」。
-- 個股查詢不要求股票出現在當周選股清單，也不要求它曾經觸發策略。
-- 手動查詢股票會出現在股票下拉選單頂端並標示「（查詢）」。
-- `MA20 趨勢向上` 核取方塊預設勾選。
-- 勾選時只顯示突破 MA20 且本周 MA20 大於前周 MA20 的訊號；取消後顯示全部突破訊號。
-- 最新週 `2026-07-06` 實測：預設趨勢篩選為 25 檔，取消後為 75 檔。
-- 資本額範圍以億元輸入，最低與最高留空代表不限。
-- 啟用資本額篩選時，沒有該歷史時點股本資料的股票會被排除。
-- 最新週 75 檔訊號皆有歷史資本額；預設趨勢下最低 10 億為 6 檔、10 至 50 億為 5 檔，取消趨勢後 10 至 50 億為 18 檔。
-- 最低資本額大於最高資本額時，頁面會顯示「最高資本額不可小於最低資本額」。
-
-## 完成後驗證
-
-- `capital_manifest.json`：2,530 檔全數涵蓋到 `2026-07-10`。
-- 股本科目抽樣與全量正規化結果：`CapitalStock / 股本合計` 73,286 筆，`OrdinaryShare / 普通股股本` 571 筆。
-- 73,857 筆股本金額均大於 0，未納入資本公積、股本溢價、預收股本等排除科目。
-- Q1、Q2、Q3、年報有效日規則全量檢查為 0 筆不符。
-- 周資料共有 1,302,743 筆附有歷史股本，占 63.34%；早期資料依規則維持無股本資料，不倒填。
-- 最新週有交易資料的 2,384 檔中，2,353 檔有當期歷史股本（98.70%）。
-- 瀏覽器實測資本額篩選結果與輸出 JSON 計算一致，且未發現 JavaScript 錯誤。
-
-圖表功能：
-
-- 周 K、MA20 與成交量。
-- 游標十字線與浮動字卡，顯示日期、開高低收、MA20 和成交量。
-- 滑鼠滾輪以游標所在位置為中心縮放。
-- `+`、`-` 放大縮小。
-- 左右按鈕瀏覽較早或較新資料。
-- 「最新」按鈕跳到資料最尾端。
-- 所有可視範圍內的策略進場點都顯示箭頭。
-- 一般歷史進場點使用藍色箭頭。
-- 目前選股週的進場點使用橘色箭頭。
-
-個股查詢驗證：
-
-- `6659 天明製藥`：從未觸發策略，仍可載入 28 根周 K。
-- `2330 台積電`：可載入圖表，測試視窗內顯示 2 個策略箭頭。
-- 瀏覽器測試未發現 JavaScript 錯誤。
-
-## 啟動網頁
-
-最方便方式：雙擊專案根目錄的 `開啟選股網頁.bat`。
-
-批次檔會：
-
-1. 檢查 `8358` 是否已有伺服器監聽。
-2. 沒有伺服器時，使用 Miniconda Python 在背景啟動。
-3. 等待 `http://127.0.0.1:8358/web/` 回應。
-4. 使用預設瀏覽器開啟互動網頁。
-
-手動啟動網頁伺服器：
+預覽下一批，不連線也不修改狀態：
 
 ```powershell
-C:\Users\Ernesto\miniconda3\python.exe -m http.server 8358
+C:\Users\Ernesto\miniconda3\python.exe src\run_downloader.py --dry-run
 ```
 
-目前網頁伺服器快照 PID：`27116`。
+排程實際執行：
 
-## 重要程式檔
+```powershell
+.\start_downloader.ps1
+```
 
-- `src/pipeline.py`：下載、零價補值、日轉周、MA20、訊號與網頁資料輸出。
-- `src/run_downloader.py`：下載排程與 65 分鐘重試。
-- `web/index.html`：網頁結構與控制項。
-- `web/app.js`：資料載入、個股查詢、SVG K 線、箭頭、十字線與縮放。
-- `web/styles.css`：網頁與圖表樣式。
-- `開啟選股網頁.bat`：一鍵啟動伺服器並開啟網頁。
+下載日誌：`logs/finmind_downloader.log`
 
-## 下次接手優先事項
+本機網頁：`http://127.0.0.1:8358/web/`
 
-1. 先讀取本文件，確認網頁伺服器與最新輸出時間。
-2. 股價、歷史股本、快取重建與資本額篩選驗證均已完成，不需再次執行全量下載。
-3. 等使用者指定季度更新的月份／日期與時間後，再建立定期更新排程。
-4. 定期更新應續用 manifest 增量抓取、65 分鐘限流重試，完成後以 `--cached-only` 重建並驗證網頁。
+## 主要檔案
+
+- `src/pipeline.py`：下載、快取合併、週 K、MA20、選股與網頁輸出
+- `src/run_downloader.py`：550 檔分批、狀態接續、當週覆蓋、完成後重建
+- `start_downloader.ps1`：唯一的排程啟動入口
+- `data/raw/price_manifest.json`：每檔股價涵蓋截止日
+- `data/raw/incremental_update_state.json`：目前輪次與接續狀態
+- `data/processed/chart_index.json`：網頁索引與資料完整度欄位
+- `web/app.js`：網頁操作與資料完整度顯示
+- `.github/workflows/finmind-weekly-update.yml`：GitHub Secret、五次週六排程、cache 接續與完成後自動提交
+
+## Git 操作狀態
+
+本次只修改本機工作樹，尚未自動 commit、push 或部署。要讓 GitHub 排程生效，必須將本次程式、workflow 與 `data/processed/capital_history.csv` 一起提交到 GitHub。

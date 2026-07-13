@@ -1,0 +1,93 @@
+name: FinMind weekly update
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 台灣時間每週六 10:00、11:00、12:00、13:00、14:00。
+    # 每次最多 550 檔，五次可涵蓋目前約 2,530 檔股票。
+    - cron: "0 2-6 * * 6"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finmind-weekly-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+      RAW_CACHE_KEY: finmind-raw-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+      RAW_CACHE_PREFIX: finmind-raw-${{ runner.os }}-${{ github.ref_name }}-
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate FinMind secret
+        shell: bash
+        run: |
+          if [ -z "$FINMIND_TOKEN" ]; then
+            echo "::error::Repository secret FINMIND_TOKEN is not configured."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Restore resumable FinMind cache
+        id: raw-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: data/raw
+          key: ${{ env.RAW_CACHE_KEY }}
+          restore-keys: |
+            ${{ env.RAW_CACHE_PREFIX }}
+
+      - name: Download one resumable batch
+        id: download
+        continue-on-error: true
+        run: python src/run_downloader.py --end auto --batch-size 550 --sleep 0.15
+
+      - name: Show progress
+        if: always() && hashFiles('data/raw/stock_info.csv') != ''
+        run: python src/run_downloader.py --status
+
+      - name: Commit completed web data
+        if: steps.download.outcome == 'success'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- data/processed/chart_index.json data/processed/capital_history.csv data/processed/series data/processed/signals
+          if git diff --cached --quiet; then
+            echo "No completed full-market web update to commit."
+            exit 0
+          fi
+          git commit -m "data: update FinMind weekly market data"
+          git push origin HEAD:${GITHUB_REF_NAME}
+
+      - name: Save resumable FinMind cache
+        if: always() && hashFiles('data/raw/**') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/raw
+          key: ${{ env.RAW_CACHE_KEY }}
+
+      - name: Fail after preserving progress
+        if: steps.download.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::error::Downloader failed; data/raw progress was preserved when possible."
+          exit 1
