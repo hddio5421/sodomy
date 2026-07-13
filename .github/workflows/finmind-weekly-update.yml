@@ -20,8 +20,8 @@ jobs:
     timeout-minutes: 90
     env:
       FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
-      RAW_CACHE_KEY: finmind-raw-${{ runner.os }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
-      RAW_CACHE_PREFIX: finmind-raw-${{ runner.os }}-${{ github.ref_name }}-
+      RAW_CACHE_KEY: finmind-raw-Linux-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+      RAW_CACHE_PREFIX: finmind-raw-Linux-${{ github.ref_name }}-
 
     steps:
       - name: Checkout repository
