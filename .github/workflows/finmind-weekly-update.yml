@@ -2,10 +2,8 @@ name: FinMind weekly update
 
 on:
   workflow_dispatch:
-  schedule:
-    # 台灣時間每週六 10:00、11:00、12:00、13:00、14:00。
-    # 每次最多 550 檔，五次可涵蓋目前約 2,530 檔股票。
-    - cron: "0 2-6 * * 6"
+  # 排程改由 Cloudflare Worker 觸發（workflow_dispatch），不依賴 GitHub 內建 cron。
+  # Cloudflare cron: 0 14-18 * * 5（UTC 週五，對應台灣時間週五 22:00 ~ 週六 02:00）
 
 permissions:
   contents: write
